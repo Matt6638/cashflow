@@ -960,7 +960,13 @@ function renderExpense() {
           oninput="autoSave()">
         <span class="unit">円</span>`;
     } else {
-      const ro = isFixed ? 'readonly' : '';
+      let ro = isFixed ? 'readonly' : '';
+      let amtShown = val;
+      if ((item.id === 'card_ba' || item.id === 'card_per') && cardDetailCount(item.id) > 0) {
+        const _cs = cardDetailSum(item.id);
+        lsSet(currentMonth, item.id, String(_cs));
+        amtShown = _cs; ro = 'readonly';
+      }
       const debitStr = item.debitRule ? calcDebitDate(item, currentMonth) : '';
       const debitField = debitStr ? `
         <span class="debit-date-badge">${debitStr}</span>
@@ -993,13 +999,14 @@ function renderExpense() {
         <div class="row-label">${item.label}${tagH(item.tag)}</div>
         ${debitField}
         <input class="amt-input" type="text" id="ex_${item.id}"
-          value="${val?Number(val).toLocaleString('ja-JP'):''}" placeholder="0" ${ro}
+          value="${amtShown?Number(amtShown).toLocaleString('ja-JP'):''}" placeholder="0" ${ro}
           oninput="autoSave()">
         <span class="unit">円</span>
         ${monthlyBtn}
         ${deleteBtn}`;
     }
     sec.appendChild(row);
+    if (item.id === 'card_ba' || item.id === 'card_per') renderCardDetail(sec, item.id);
   });
 
   // 臨時支出セクション
@@ -1335,6 +1342,160 @@ function toggleGroupMonthly(g, d, btn) {
   renderExpense(); recalc(); initCommaInputs();
 }
 
+// ── カード固定費明細（ダイナースBA/個人の内訳）──
+function cardDetailCount(cid){ return parseInt(lsGet(currentMonth, `cd_${cid}_dcount`) || '0'); }
+function cardDetailSum(cid){
+  let s=0; const dc=cardDetailCount(cid);
+  for(let d=1; d<=dc; d++){
+    if(lsGet(currentMonth, `cd_${cid}_l${d}_paid`)==='1') continue;
+    s+=parseComma(lsGet(currentMonth, `cd_${cid}_l${d}`) || '0');
+  }
+  return s;
+}
+function refreshCard(cid){ renderExpense(); recalc(); initCommaInputs(); }
+function renderCardDetail(sec, cid){
+  const open = lsGet(currentMonth, `cd_${cid}_open`) === '1';
+  const dc = cardDetailCount(cid);
+  const sum = cardDetailSum(cid);
+  const wrap = document.createElement('div');
+  wrap.style.cssText='border:1px dashed var(--border);border-radius:8px;margin:2px 0 10px 26px;overflow:hidden;background:var(--paper);';
+  const head=document.createElement('div');
+  head.style.cssText='display:flex;align-items:center;gap:8px;padding:6px 10px;';
+  head.innerHTML = `
+    <button onclick="toggleCardOpen('${cid}')" title="開閉"
+      style="border:none;background:none;cursor:pointer;font-size:12px;color:var(--ink-light);width:16px;flex-shrink:0;">${open?'▼':'▶'}</button>
+    <span style="font-size:11px;color:var(--ink-light);flex:1;">固定費明細（内訳）${dc?('　'+dc+'件'):''}</span>
+    <span id="cdsum_${cid}" style="font-size:12px;font-weight:700;white-space:nowrap;">未払い ¥${Math.round(sum).toLocaleString('ja-JP')}</span>`;
+  wrap.appendChild(head);
+  if(open){
+    const body=document.createElement('div');
+    body.style.cssText='padding:2px 10px 8px;';
+    for(let d=1; d<=dc; d++) body.appendChild(makeCardLine(cid,d));
+    const addL=document.createElement('button');
+    addL.className='t-add-btn';
+    addL.textContent='＋ 明細を追加';
+    addL.onclick=()=>{ lsSet(currentMonth, `cd_${cid}_dcount`, String(cardDetailCount(cid)+1)); lsSet(currentMonth, `cd_${cid}_open`,'1'); refreshCard(cid); };
+    body.appendChild(addL);
+    wrap.appendChild(body);
+  }
+  sec.appendChild(wrap);
+}
+function makeCardLine(cid,d){
+  const base=`cd_${cid}_l${d}`;
+  const nm=lsGet(currentMonth, base+'_name');
+  const amt=lsGet(currentMonth, base);
+  const bank=lsGet(currentMonth, base+'_bank');
+  const mset=lsGet(currentMonth, base+'_monthly_set')==='1';
+  const paid=lsGet(currentMonth, base+'_paid')==='1';
+  const bankOpts=BANKS.map(b=>`<option value="${b.id}" ${bank===b.id?'selected':''}>${b.label}</option>`).join('');
+  const row=document.createElement('div');
+  row.className='input-row';
+  if(paid) row.style.cssText='opacity:0.4;text-decoration:line-through;';
+  const mStyle=mset?'background:#1e4dd8;color:#fff;border-color:#1e4dd8;':'background:#e8edfc;color:#8babf0;border-color:#8babf0;';
+  row.innerHTML=`
+    <input type="checkbox" id="cpd_${cid}_${d}" ${paid?'checked':''} onchange="toggleCardPaid('${cid}',${d})"
+      title="支払済み" style="width:16px;height:16px;cursor:pointer;flex-shrink:0;">
+    <input class="name-input" type="text" id="cnm_${cid}_${d}" value="${nm}" placeholder="項目名（例：サブスク・会費）"
+      oninput="saveCardLine('${cid}',${d})">
+    <select class="bank-select" id="cbk_${cid}_${d}" onchange="saveCardLine('${cid}',${d})">
+      <option value="">口座</option>${bankOpts}
+    </select>
+    <input class="amt-input" type="text" id="cex_${cid}_${d}"
+      value="${amt?Number(amt).toLocaleString('ja-JP'):''}" placeholder="0"
+      oninput="saveCardLine('${cid}',${d})">
+    <span class="unit">円</span>
+    <button onclick="toggleCardMonthly('${cid}',${d},this)" title="翌月以降にこの明細をコピー"
+      style="font-size:10px;padding:3px 6px;border:1px solid;border-radius:4px;cursor:pointer;white-space:nowrap;flex-shrink:0;${mStyle}">
+      ${mset?'✓ 毎月定額':'毎月定額'}
+    </button>
+    <button onclick="deleteCardLine('${cid}',${d})" title="この明細を削除"
+      style="background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:16px;padding:0 4px;flex-shrink:0;">×</button>`;
+  return row;
+}
+function toggleCardOpen(cid){ lsSet(currentMonth, `cd_${cid}_open`, lsGet(currentMonth, `cd_${cid}_open`)==='1'?'0':'1'); refreshCard(cid); }
+function saveCardLine(cid,d){
+  const base=`cd_${cid}_l${d}`;
+  const nm=document.getElementById(`cnm_${cid}_${d}`);
+  const bk=document.getElementById(`cbk_${cid}_${d}`);
+  const ex=document.getElementById(`cex_${cid}_${d}`);
+  if(nm) lsSet(currentMonth, base+'_name', nm.value);
+  if(bk) lsSet(currentMonth, base+'_bank', bk.value);
+  if(ex) lsSet(currentMonth, base, String(parseComma(ex.value)));
+  syncCardTotal(cid);
+}
+function syncCardTotal(cid){
+  const s=cardDetailSum(cid);
+  lsSet(currentMonth, cid, String(s));
+  const exEl=document.getElementById('ex_'+cid);
+  if(exEl){ exEl.value = s?Number(s).toLocaleString('ja-JP'):''; exEl.readOnly = cardDetailCount(cid)>0; }
+  const sumEl=document.getElementById('cdsum_'+cid);
+  if(sumEl) sumEl.textContent='未払い ¥'+Math.round(s).toLocaleString('ja-JP');
+  recalc();
+}
+function toggleCardPaid(cid,d){
+  const key=`cd_${cid}_l${d}_paid`;
+  lsSet(currentMonth, key, lsGet(currentMonth, key)==='1'?'0':'1');
+  refreshCard(cid);
+}
+function deleteCardLine(cid,d){
+  const dc=cardDetailCount(cid);
+  for(let j=d;j<dc;j++){
+    const cur=`cd_${cid}_l${j}`, next=`cd_${cid}_l${j+1}`;
+    lsSet(currentMonth, cur+'_name', lsGet(currentMonth, next+'_name'));
+    lsSet(currentMonth, cur+'_bank', lsGet(currentMonth, next+'_bank'));
+    lsSet(currentMonth, cur, lsGet(currentMonth, next));
+    lsSet(currentMonth, cur+'_monthly_set', lsGet(currentMonth, next+'_monthly_set'));
+    lsSet(currentMonth, cur+'_paid', lsGet(currentMonth, next+'_paid'));
+  }
+  const last=`cd_${cid}_l${dc}`;
+  lsSet(currentMonth, last+'_name','');
+  lsSet(currentMonth, last+'_bank','');
+  lsSet(currentMonth, last,'');
+  lsSet(currentMonth, last+'_monthly_set','');
+  lsSet(currentMonth, last+'_paid','');
+  lsSet(currentMonth, `cd_${cid}_dcount`, String(Math.max(0,dc-1)));
+  refreshCard(cid);
+}
+function toggleCardMonthly(cid,d,btn){
+  const base=`cd_${cid}_l${d}`;
+  const mkey=base+'_monthly_set';
+  const isSet=lsGet(currentMonth, mkey)==='1';
+  const nm=lsGet(currentMonth, base+'_name');
+  const bank=lsGet(currentMonth, base+'_bank');
+  const amt=lsGet(currentMonth, base);
+  const writeMonth=(m)=>{
+    const dcM=parseInt(LS.getItem(lsKey(m,`cd_${cid}_dcount`))||'0');
+    if(d>dcM) lsSet(m, `cd_${cid}_dcount`, String(d));
+    lsSet(m, base, amt);
+    if(nm) lsSet(m, base+'_name', nm);
+    if(bank) lsSet(m, base+'_bank', bank);
+    lsSet(m, mkey, '1');
+  };
+  const clearMonth=(m)=>{
+    LS.removeItem(lsKey(m, base));
+    LS.removeItem(lsKey(m, base+'_name'));
+    LS.removeItem(lsKey(m, base+'_bank'));
+    LS.removeItem(lsKey(m, mkey));
+  };
+  if(isSet){
+    for(let m=currentMonth+1;m<=11;m++) clearMonth(m);
+    const sy=currentYear;
+    for(let y=currentYear+1;y<=2029;y++){ currentYear=y; for(let m=0;m<=11;m++) clearMonth(m); }
+    currentYear=sy;
+    lsSet(currentMonth, mkey,'0');
+    showToast('毎月定額を解除しました');
+  } else {
+    let cnt=0;
+    for(let m=currentMonth+1;m<=11;m++){ writeMonth(m); cnt++; }
+    const sy=currentYear;
+    for(let y=currentYear+1;y<=2029;y++){ currentYear=y; for(let m=0;m<=11;m++){ writeMonth(m); cnt++; } }
+    currentYear=sy;
+    lsSet(currentMonth, mkey,'1');
+    showToast('✓ '+cnt+'ヶ月分にコピーしました');
+  }
+  refreshCard(cid);
+}
+
 function renderBanks() {
   const sec = document.getElementById('bankSection');
   sec.innerHTML = '';
@@ -1409,7 +1570,17 @@ function monthItemAmount(m, item) {
   const deleted = JSON.parse(LS.getItem(`cf8_y${currentYear}_m${m}_deleted`) || '[]');
   if (deleted.includes(item.id)) return 0;
   if (item.fixed !== undefined) return item.fixed;
+  if ((item.id === 'card_ba' || item.id === 'card_per') && parseInt(lsGet(m, `cd_${item.id}_dcount`) || '0') > 0) return cardDetailSumM(item.id, m);
   return parseComma(lsGet(m, item.id) || '0');
+}
+function cardDetailSumM(cid, m){
+  const dc = parseInt(lsGet(m, `cd_${cid}_dcount`) || '0');
+  let s = 0;
+  for (let d = 1; d <= dc; d++){
+    if (lsGet(m, `cd_${cid}_l${d}_paid`) === '1') continue;
+    s += parseComma(lsGet(m, `cd_${cid}_l${d}`) || '0');
+  }
+  return s;
 }
 function computeMonthCategories(m) {
   const cat = { card:0, fixed:0, tax:0, annual:0, other:0, temp:0 };
