@@ -631,7 +631,7 @@ const EXPENSES = [
   { id:'lease',      label:'㈱マツガミ リース料（三井住友振込）',   tag:'lease', group:'固定支出', fixed:600000, bankHint:'smbc',   monthly:true },
   { id:'housing',    label:'住宅ローン（但馬信用金庫）',             tag:'fixed', group:'固定支出', bankHint:'tajima', monthly:true },
   { id:'ohara',     label:'大原家 生活費（楽天銀行振込）', tag:'fixed', group:'固定支出', fixed:80000, bankHint:'rakuten', monthly:true },
-  { id:'morikawa_salary', label:'森川さん給与', tag:'fixed', group:'固定支出', monthly:true },
+  { id:'morikawa_salary', label:'森川さん給与（三井住友）', tag:'fixed', group:'固定支出', bankHint:'smbc', monthly:true },
   // 税金 ── 所得税（三井住友）
   { id:'tax1',       label:'所得税 予定納税 第1期（三井住友）',    tag:'tax',   group:'税金', onlyMonths:[6],  fixed:578000, bankHint:'smbc', debitRule:'jul31' },
   { id:'tax2',       label:'所得税 予定納税 第2期（三井住友）',    tag:'tax',   group:'税金', onlyMonths:[10], fixed:578000, bankHint:'smbc', debitRule:'nov30' },
@@ -661,11 +661,11 @@ const EXPENSES = [
 
 // 口座定義
 const BANKS = [
-  { id:'smbc',    label:'三井住友銀行',   color:'#0055b0' },
-  { id:'tajima',  label:'但馬信用金庫',   color:'#e07b00' },
+  { id:'smbc',    label:'三井住友銀行',   color:'#009944' },
+  { id:'tajima',  label:'但馬信用金庫',   color:'#8dc21f' },
   { id:'rakuten', label:'楽天銀行',       color:'#bf0000' },
-  { id:'minato',  label:'みなと銀行',     color:'#007a5e' },
-  { id:'tokyostar', label:'東京スター銀行', color:'#7a2fd0' },
+  { id:'minato',  label:'みなと銀行',     color:'#009fe8' },
+  { id:'tokyostar', label:'東京スター銀行', color:'#f39800' },
 ];
 
 let currentMonth = new Date().getMonth();
