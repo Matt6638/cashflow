@@ -380,7 +380,7 @@
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <button onclick="toggleView()" id="viewToggleBtn" style="font-size:11px;padding:5px 12px;border-radius:6px;cursor:pointer;border:1px solid #3a4060;background:#2a3050;color:#fff;font-weight:700;white-space:nowrap;">📅 年間サマリー</button>
     <div style="display:flex;align-items:center;gap:8px;">
-      <label style="font-size:11px;color:#8b90a0;white-space:nowrap;">入力日</label>
+      <label style="font-size:11px;color:#8b90a0;white-space:nowrap;">最終更新日</label>
       <input type="date" id="inputDate"
         style="padding:5px 9px;border:1px solid #3a4060;border-radius:6px;
                font-size:12px;color:#ffffff;background:#2a3050;cursor:pointer;
@@ -664,6 +664,7 @@ const BANKS = [
   { id:'tajima',  label:'但馬信用金庫',   color:'#e07b00' },
   { id:'rakuten', label:'楽天銀行',       color:'#bf0000' },
   { id:'minato',  label:'みなと銀行',     color:'#007a5e' },
+  { id:'tokyostar', label:'東京スター銀行', color:'#7a2fd0' },
 ];
 
 let currentMonth = new Date().getMonth();
@@ -2157,7 +2158,7 @@ function togglePaid(id) {
 function autoSave() {
   // Persist inputDate on every change too
   const dateEl = document.getElementById('inputDate');
-  if (dateEl && dateEl.value) lsSet(currentMonth, 'inputDate', dateEl.value);
+  { const _t=new Date(); const _td=_t.getFullYear()+'-'+String(_t.getMonth()+1).padStart(2,'0')+'-'+String(_t.getDate()).padStart(2,'0'); lsSet(currentMonth,'inputDate',_td); if(dateEl) dateEl.value=_td; }
   EXPENSES.forEach(item => {
     if (item.fixed !== undefined) return;
     const el = document.getElementById('ex_'+item.id);
@@ -2200,7 +2201,7 @@ function updateLastSavedLabel() {
   const ts = lsGet(currentMonth, 'savedAt');
   const dateVal = lsGet(currentMonth, 'inputDate');
   let parts = [];
-  if (dateVal) parts.push('入力日: ' + dateVal.replace(/-/g, '/'));
+  if (dateVal) parts.push('最終更新日: ' + dateVal.replace(/-/g, '/'));
   if (ts) parts.push('保存: ' + ts);
   el.textContent = parts.join('　');
 }
