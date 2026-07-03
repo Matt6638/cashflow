@@ -1163,21 +1163,6 @@ function propagateMonthlyForward(){
         currentYear = sy2;
       }
     });
-    ['card_ba','card_per'].forEach(cid => {
-      const dc = parseInt(lsGet(cm, `cd_${cid}_dcount`)||'0');
-      for(let d=1; d<=dc; d++){
-        const base = `cd_${cid}_l${d}`;
-        if(lsGet(cm, base+'_monthly_set') !== '1') continue;
-        const val = lsGet(cm, base), name = lsGet(cm, base+'_name'), bank = lsGet(cm, base+'_bank');
-        const sig = 'c|'+cy+'|'+cm+'|'+val+'|'+name;
-        if(_mfSig['c_'+cid+'_'+d] === sig) continue;
-        _mfSig['c_'+cid+'_'+d] = sig;
-        const sy2 = currentYear;
-        for(let m=cm+1;m<=11;m++){ const mc=parseInt(LS.getItem(`cf8_y${cy}_m${m}_cd_${cid}_dcount`)||'0'); if(d>mc) lsSet(m,`cd_${cid}_dcount`,String(d)); lsSet(m,base,val); lsSet(m,base+'_name',name); lsSet(m,base+'_bank',bank); lsSet(m,base+'_monthly_set','1'); }
-        for(let y=cy+1;y<=2029;y++){ currentYear=y; for(let m=0;m<=11;m++){ const mc=parseInt(LS.getItem(`cf8_y${y}_m${m}_cd_${cid}_dcount`)||'0'); if(d>mc) lsSet(m,`cd_${cid}_dcount`,String(d)); lsSet(m,base,val); lsSet(m,base+'_name',name); lsSet(m,base+'_bank',bank); lsSet(m,base+'_monthly_set','1'); } }
-        currentYear = sy2;
-      }
-    });
   }catch(e){}
 }
 var _mfTimer = null;
@@ -1507,6 +1492,7 @@ function saveCardLine(cid,d){
   if(bk) lsSet(currentMonth, base+'_bank', bk.value);
   if(ex) lsSet(currentMonth, base, String(parseComma(ex.value)));
   syncCardTotal(cid);
+  scheduleMonthlyForward();
 }
 function syncCardTotal(cid){
   const s=cardDetailSum(cid);
@@ -1665,10 +1651,10 @@ function cardDetailSumM(cid, m){
   return s;
 }
 function computeMonthCategories(m) {
-  const cat = { card_ba:0, card_per:0, card:0, fixed:0, tax:0, annual:0, other:0, temp:0 };
+  const cat = { dinerscard:0, card:0, fixed:0, tax:0, annual:0, other:0, temp:0 };
   const map = { 'カード支払':'card', '固定支出':'fixed', '税金':'tax', '年間固定支出':'annual' };
   EXPENSES.forEach(item => {
-    if (item.id === 'card_ba') { cat.card_ba += monthItemAmount(m, item); return; } if (item.id === 'card_per') { cat.card_per += monthItemAmount(m, item); return; } const c = map[item.group]; if (!c) return;
+    if (item.id === 'card_ba' || item.id === 'card_per') { cat.dinerscard += monthItemAmount(m, item); return; } const c = map[item.group]; if (!c) return;
     cat[c] += monthItemAmount(m, item);
   });
   const dyn = { card_extra:'card', custom:'other', temp:'temp' };
@@ -1686,7 +1672,7 @@ function computeMonthCategories(m) {
 function renderAnnual() {
   const av = document.getElementById('annualView');
   if (!av) return;
-  const cats = [['card_ba','ダイナース（BA）'],['card_per','ダイナース（個人）'],['card','カード支払'],['fixed','固定支出'],['tax','税金'],['annual','年間固定支出'],['other','その他固定支出'],['temp','臨時支出']];
+  const cats = [['dinerscard','ダイナースカード（BA＋個人）'],['card','カード支払'],['fixed','固定支出'],['tax','税金'],['annual','年間固定支出'],['other','その他固定支出'],['temp','臨時支出']];
   const monthCats = [];
   for (let m = 0; m < 12; m++) monthCats.push(computeMonthCategories(m));
   const monthTotals = monthCats.map(c => cats.reduce((a, kv) => a + c[kv[0]], 0));
@@ -1730,12 +1716,12 @@ function renderAnnual() {
   av.innerHTML = html;
 }
 
-const _CAT_LABEL = { card_ba:'ダイナース（BA）', card_per:'ダイナース（個人）', card:'カード支払', fixed:'固定支出', tax:'税金', annual:'年間固定支出', other:'その他固定支出', temp:'臨時支出' };
+const _CAT_LABEL = { dinerscard:'ダイナースカード（BA＋個人）', card:'カード支払', fixed:'固定支出', tax:'税金', annual:'年間固定支出', other:'その他固定支出', temp:'臨時支出' };
 function annualBreakItems(m, k) {
   const map = { 'カード支払':'card', '固定支出':'fixed', '税金':'tax', '年間固定支出':'annual' };
   const rows = [];
   EXPENSES.forEach(item => {
-    let _ck = map[item.group]; if (item.id === 'card_ba') _ck = 'card_ba'; else if (item.id === 'card_per') _ck = 'card_per'; if (_ck !== k) return;
+    let _ck = map[item.group]; if (item.id === 'card_ba' || item.id === 'card_per') _ck = 'dinerscard'; if (_ck !== k) return;
     const v = monthItemAmount(m, item);
     if (v) rows.push({ name: item.label, amt: v });
   });
@@ -1796,7 +1782,7 @@ function showAnnualCell(m, k) {
   _annualModal(`${MONTHS[m]}　${_CAT_LABEL[k] || k} の内訳`, rows, total);
 }
 function showAnnualMonth(m) {
-  const cats = ['card_ba','card_per','card','fixed','tax','annual','other','temp'];
+  const cats = ['dinerscard','card','fixed','tax','annual','other','temp'];
   const rows = [];
   cats.forEach(k => {
     const items = annualBreakItems(m, k);
