@@ -1163,6 +1163,21 @@ function propagateMonthlyForward(){
         currentYear = sy2;
       }
     });
+    ['card_ba','card_per'].forEach(cid => {
+      const dc = parseInt(lsGet(cm, `cd_${cid}_dcount`)||'0');
+      for(let d=1; d<=dc; d++){
+        const base = `cd_${cid}_l${d}`;
+        if(lsGet(cm, base+'_monthly_set') !== '1') continue;
+        const val = lsGet(cm, base), name = lsGet(cm, base+'_name'), bank = lsGet(cm, base+'_bank');
+        const sig = 'c|'+cy+'|'+cm+'|'+val+'|'+name;
+        if(_mfSig['c_'+cid+'_'+d] === sig) continue;
+        _mfSig['c_'+cid+'_'+d] = sig;
+        const sy2 = currentYear;
+        for(let m=cm+1;m<=11;m++){ const mc=parseInt(LS.getItem(`cf8_y${cy}_m${m}_cd_${cid}_dcount`)||'0'); if(d>mc) lsSet(m,`cd_${cid}_dcount`,String(d)); lsSet(m,base,val); lsSet(m,base+'_name',name); lsSet(m,base+'_bank',bank); lsSet(m,base+'_monthly_set','1'); }
+        for(let y=cy+1;y<=2029;y++){ currentYear=y; for(let m=0;m<=11;m++){ const mc=parseInt(LS.getItem(`cf8_y${y}_m${m}_cd_${cid}_dcount`)||'0'); if(d>mc) lsSet(m,`cd_${cid}_dcount`,String(d)); lsSet(m,base,val); lsSet(m,base+'_name',name); lsSet(m,base+'_bank',bank); lsSet(m,base+'_monthly_set','1'); } }
+        currentYear = sy2;
+      }
+    });
   }catch(e){}
 }
 var _mfTimer = null;
