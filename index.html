@@ -1650,13 +1650,45 @@ function cardDetailSumM(cid, m){
   }
   return s;
 }
+// 年間サマリー専用：カード明細の全行合計（月次の cardDetailSumM と異なり、支払済みも計画額として含める）
+function cardDetailPlanSumM(cid, m){
+  const dc = parseInt(lsGet(m, `cd_${cid}_dcount`) || '0');
+  let s = 0;
+  for (let d = 1; d <= dc; d++) s += parseComma(lsGet(m, `cd_${cid}_l${d}`) || '0');
+  return s;
+}
+// 年間サマリー専用：カード明細の各行を {name, amt, tag} で列挙（金額0の行は除外）
+// tag（BA / 個人）で、どちらのカードの明細かを一目で区別できるようにする
+function cardDetailPlanRows(cid, m, tag){
+  const dc = parseInt(lsGet(m, `cd_${cid}_dcount`) || '0');
+  const rows = [];
+  for (let d = 1; d <= dc; d++){
+    const v = parseComma(lsGet(m, `cd_${cid}_l${d}`) || '0');
+    if (!v) continue;
+    const nm = (lsGet(m, `cd_${cid}_l${d}_name`) || '').trim() || '（名称未入力）';
+    rows.push({ name: nm, amt: v, tag: tag });
+  }
+  return rows;
+}
+// 年間サマリー専用：ダイナース1枚の月額。
+// カード全体金額（メイン入力欄＝実際の請求額。固定費を内包）があればそれを優先し、
+// 無ければ固定費明細（内訳）の合計を使う。
+function dinersCardMonthAmount(cid, m){
+  const whole = parseComma(lsGet(m, cid) || '0');
+  if (whole) return whole;
+  return cardDetailPlanSumM(cid, m);
+}
 function computeMonthCategories(m) {
-  const cat = { dinerscard:0, card:0, fixed:0, tax:0, annual:0, other:0, temp:0 };
+  const cat = { est:0, dinerscard:0, card:0, fixed:0, tax:0, annual:0, other:0, temp:0 };
   const map = { 'カード支払':'card', '固定支出':'fixed', '税金':'tax', '年間固定支出':'annual' };
+  cat.est = parseComma(lsGet(m, 'an_estexp') || '0'); // 見込み支出（年間ビューで直接入力・月合計に含める）
   EXPENSES.forEach(item => {
-    if (item.id === 'card_ba' || item.id === 'card_per') { cat.dinerscard += monthItemAmount(m, item); return; } const c = map[item.group]; if (!c) return;
+    if (item.id === 'card_ba' || item.id === 'card_per') return; // ダイナースは下でカード明細の実合計から算出
+    const c = map[item.group]; if (!c) return;
     cat[c] += monthItemAmount(m, item);
   });
+  // ダイナース（BA＋個人）：合計セルではなくカード明細の実合計から算出（未オープンの月でも0にならない）
+  cat.dinerscard = dinersCardMonthAmount('card_ba', m) + dinersCardMonthAmount('card_per', m);
   const dyn = { card_extra:'card', custom:'other', temp:'temp' };
   Object.keys(dyn).forEach(prefix => {
     const count = parseInt(lsGet(m, prefix+'_count') || '1');
@@ -1672,13 +1704,18 @@ function computeMonthCategories(m) {
 function renderAnnual() {
   const av = document.getElementById('annualView');
   if (!av) return;
-  const cats = [['dinerscard','ダイナースカード（BA＋個人）'],['card','カード支払'],['fixed','固定支出'],['tax','税金'],['annual','年間固定支出'],['other','その他固定支出'],['temp','臨時支出']];
+  const cats = [['est','見込み支出'],['dinerscard','ダイナースカード（BA＋個人）'],['card','カード支払'],['fixed','固定支出'],['tax','税金'],['annual','年間固定支出'],['other','その他固定支出'],['temp','臨時支出']];
   const monthCats = [];
   for (let m = 0; m < 12; m++) monthCats.push(computeMonthCategories(m));
-  const monthTotals = monthCats.map(c => cats.reduce((a, kv) => a + c[kv[0]], 0));
+  // 見込み収入（年間ビューで直接入力・月合計から差し引く）
+  const estIncome = [];
+  for (let m = 0; m < 12; m++) estIncome.push(parseComma(lsGet(m, 'an_estincome') || '0'));
+  const monthExpense = monthCats.map(c => cats.reduce((a, kv) => a + c[kv[0]], 0)); // 支出合計（見込み支出含む）
+  // 月合計＝見込み収入 − 全支出（純額。プラス＝黒字／マイナス＝赤字）
+  const monthTotals = monthCats.map((c, m) => estIncome[m] - monthExpense[m]);
   const grand = monthTotals.reduce((a, b) => a + b, 0);
-  const maxMonth = Math.max(1, ...monthTotals);
-  const yen = n => '¥' + Math.round(n).toLocaleString('ja-JP');
+  const maxMonth = Math.max(1, ...monthExpense); // 棒グラフは支出額ベース
+  const yen = n => { n = Math.round(n); return (n < 0 ? '−¥' : '¥') + Math.abs(n).toLocaleString('ja-JP'); };
   const reiwa = currentYear - 2018;
 
   let html = `<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
@@ -1687,41 +1724,99 @@ function renderAnnual() {
 
   html += '<div class="card" style="padding:16px 18px;margin-bottom:16px;"><div style="display:flex;align-items:flex-end;gap:6px;height:130px;">';
   for (let m = 0; m < 12; m++) {
-    const hpct = Math.round(monthTotals[m] / maxMonth * 100);
-    const man = monthTotals[m] ? ('¥' + Math.round(monthTotals[m]/10000).toLocaleString('ja-JP') + '万') : '';
+    const hpct = Math.max(0, Math.round(monthExpense[m] / maxMonth * 100));
+    const man = monthExpense[m] ? ('¥' + Math.round(monthExpense[m]/10000).toLocaleString('ja-JP') + '万') : '';
     html += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;">
       <div style="font-size:9px;color:var(--ink-faint);margin-bottom:2px;white-space:nowrap;">${man}</div>
-      <div title="${MONTHS[m]} ${yen(monthTotals[m])}" style="width:100%;background:linear-gradient(180deg,#3a5bd0,#1e4dd8);border-radius:3px 3px 0 0;height:${hpct}%;min-height:${monthTotals[m]?4:0}px;"></div>
+      <div title="${MONTHS[m]} 支出 ${yen(monthExpense[m])}" style="width:100%;background:linear-gradient(180deg,#3a5bd0,#1e4dd8);border-radius:3px 3px 0 0;height:${hpct}%;min-height:${monthExpense[m]>0?4:0}px;"></div>
       <div style="font-size:10px;color:var(--ink-light);margin-top:4px;">${m+1}</div></div>`;
   }
-  html += '</div></div>';
+  html += '</div><div style="font-size:10px;color:var(--ink-faint);text-align:center;margin-top:8px;">棒＝支出総額　／　表の「月合計」＝収入−支出（マイナスは赤字）</div></div>';
 
   html += '<div class="card" style="overflow-x:auto;"><table id="annualTable" style="border-collapse:collapse;width:100%;min-width:0;font-size:11px;">';
   html += '<thead><tr><th style="text-align:left;padding:8px 10px;position:sticky;left:0;background:var(--white);border-bottom:2px solid var(--border);z-index:1;">項目</th>';
   for (let m = 0; m < 12; m++) html += `<th style="text-align:right;padding:8px 8px;border-bottom:2px solid var(--border);white-space:nowrap;">${m+1}月</th>`;
   html += '<th style="text-align:right;padding:8px 10px;border-bottom:2px solid var(--border);background:var(--accent-soft);white-space:nowrap;">年間合計</th></tr></thead><tbody>';
+  // 見込み収入（最上段・入力すると当月〜以降へ前方コピー・月合計から差し引く）
+  html += '<tr><td style="text-align:left;padding:7px 10px;position:sticky;left:0;background:var(--white);border-bottom:1px solid var(--border);font-weight:600;white-space:nowrap;color:#1a7a4a;">見込み収入</td>';
+  for (let m = 0; m < 12; m++) { const v = estIncome[m]; html += `<td style="padding:4px 5px;border-bottom:1px solid var(--border);"><input type="text" class="an-amt" inputmode="numeric" value="${v?Math.round(v).toLocaleString('ja-JP'):''}" placeholder="0" onchange="saveAnnualIncome(${m},this)" style="width:100%;min-width:52px;box-sizing:border-box;text-align:right;border:1px solid var(--border);border-radius:4px;padding:3px 5px;font-size:11px;color:#1a7a4a;background:#eefaf1;"></td>`; }
+  html += `<td style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border);background:var(--accent-soft);font-weight:700;color:#1a7a4a;">${yen(estIncome.reduce((a,b)=>a+b,0))}</td></tr>`;
   cats.forEach(kv => {
     const k = kv[0], label = kv[1];
     const annualCat = monthCats.reduce((a, c) => a + c[k], 0);
     html += `<tr><td style="text-align:left;padding:7px 10px;position:sticky;left:0;background:var(--white);border-bottom:1px solid var(--border);font-weight:600;white-space:nowrap;">${label}</td>`;
-    for (let m = 0; m < 12; m++) { const v = monthCats[m][k]; html += `<td class="abk" onclick="showAnnualCell(${m},'${k}')" style="text-align:right;padding:7px 8px;border-bottom:1px solid var(--border);color:${v?'var(--ink)':'#c8ccd8'};">${v?yen(v):'—'}</td>`; }
+    if (k === 'est') {
+      // 見込み支出：年間ビューで直接入力（入力すると当月〜以降へ前方コピー）
+      for (let m = 0; m < 12; m++) { const v = monthCats[m][k]; html += `<td style="padding:4px 5px;border-bottom:1px solid var(--border);"><input type="text" class="an-amt" inputmode="numeric" value="${v?Math.round(v).toLocaleString('ja-JP'):''}" placeholder="0" onchange="saveAnnualEst(${m},this)" style="width:100%;min-width:52px;box-sizing:border-box;text-align:right;border:1px solid var(--border);border-radius:4px;padding:3px 5px;font-size:11px;background:#fffdf3;"></td>`; }
+    } else {
+      for (let m = 0; m < 12; m++) { const v = monthCats[m][k]; html += `<td class="abk" onclick="showAnnualCell(${m},'${k}')" style="text-align:right;padding:7px 8px;border-bottom:1px solid var(--border);color:${v?'var(--ink)':'#c8ccd8'};">${v?yen(v):'—'}</td>`; }
+    }
     html += `<td class="abk" onclick="showAnnualCatYear('${k}')" style="text-align:right;padding:7px 10px;border-bottom:1px solid var(--border);background:var(--accent-soft);font-weight:700;">${yen(annualCat)}</td></tr>`;
   });
-  html += '<tr><td style="text-align:left;padding:9px 10px;position:sticky;left:0;background:var(--paper);font-weight:800;">月合計</td>';
-  for (let m = 0; m < 12; m++) html += `<td class="abk" onclick="showAnnualMonth(${m})" style="text-align:right;padding:9px 8px;background:var(--paper);font-weight:800;white-space:nowrap;">${yen(monthTotals[m])}</td>`;
-  html += `<td style="text-align:right;padding:9px 10px;background:var(--accent);color:#fff;font-weight:800;">${yen(grand)}</td></tr>`;
+  html += '<tr><td style="text-align:left;padding:9px 10px;position:sticky;left:0;background:var(--paper);font-weight:800;">月合計<span style="font-weight:500;color:var(--ink-faint);font-size:10px;">（収入−支出）</span></td>';
+  for (let m = 0; m < 12; m++) html += `<td class="abk" onclick="showAnnualMonth(${m})" style="text-align:right;padding:9px 8px;background:var(--paper);font-weight:800;white-space:nowrap;color:${monthTotals[m]<0?'var(--red)':'var(--ink)'};">${yen(monthTotals[m])}</td>`;
+  html += `<td style="text-align:right;padding:9px 10px;background:${grand<0?'var(--red)':'var(--accent)'};color:#fff;font-weight:800;">${yen(grand)}</td></tr>`;
   html += '</tbody></table></div>';
 
   html += '<div style="font-size:11px;color:var(--ink-faint);margin-top:10px;line-height:1.7;">※ 支払済みチェックの有無に関わらず、計画額として集計しています。<br>※ 表示中の年度（令和' + reiwa + '年）の1〜12月です。年度は上部のボタンで切替できます。</div>';
   av.innerHTML = html;
+  initAnnualCommaInputs();
 }
 
-const _CAT_LABEL = { dinerscard:'ダイナースカード（BA＋個人）', card:'カード支払', fixed:'固定支出', tax:'税金', annual:'年間固定支出', other:'その他固定支出', temp:'臨時支出' };
+// 年間ビュー入力欄の桁区切り（月次と同じくフォーカス中は生数字、確定時にカンマ表示。全角→半角も変換）
+// 月次の attachCommaFormat と違い、blur で月次用 autoSave/recalc を呼ばない（onchange の saveAnnual* が保存を担当）
+function initAnnualCommaInputs(){
+  document.querySelectorAll('#annualTable input.an-amt:not([data-acomma])').forEach(el => {
+    el.setAttribute('data-acomma', '1');
+    el.addEventListener('focus', function(){ const raw = parseComma(this.value); this.value = raw === 0 ? '' : String(raw); this.type = 'number'; });
+    el.addEventListener('input', function(){ const pos = this.selectionStart; const conv = toHalf(this.value); if (conv !== this.value){ this.value = conv; this.setSelectionRange(pos, pos); } });
+    // 値未変更でblurした場合の整形（変更時は onchange→renderAnnual で作り直される）
+    el.addEventListener('blur', function(){ this.type = 'text'; const raw = parseComma(this.value); this.value = raw === 0 ? '' : raw.toLocaleString('ja-JP'); });
+  });
+}
+
+// 見込み支出：入力した月〜同年12月＋翌年以降(2029まで)へ同額を前方コピー（既存の毎月定額と同じ挙動）
+function saveAnnualEst(m, el){
+  const v = String(parseComma(el.value));
+  const sy = currentYear;
+  for (let mm = m; mm <= 11; mm++) lsSet(mm, 'an_estexp', v);
+  for (let y = sy + 1; y <= 2029; y++){ currentYear = y; for (let mm = 0; mm <= 11; mm++) lsSet(mm, 'an_estexp', v); }
+  currentYear = sy;
+  renderAnnual();
+}
+// 見込み収入：入力した月〜同年12月＋翌年以降(2029まで)へ同額を前方コピー（見込み支出と同じ挙動）
+function saveAnnualIncome(m, el){
+  const v = String(parseComma(el.value));
+  const sy = currentYear;
+  for (let mm = m; mm <= 11; mm++) lsSet(mm, 'an_estincome', v);
+  for (let y = sy + 1; y <= 2029; y++){ currentYear = y; for (let mm = 0; mm <= 11; mm++) lsSet(mm, 'an_estincome', v); }
+  currentYear = sy;
+  renderAnnual();
+}
+const _CAT_LABEL = { est:'見込み支出', dinerscard:'ダイナースカード（BA＋個人）', card:'カード支払', fixed:'固定支出', tax:'税金', annual:'年間固定支出', other:'その他固定支出', temp:'臨時支出' };
 function annualBreakItems(m, k) {
   const map = { 'カード支払':'card', '固定支出':'fixed', '税金':'tax', '年間固定支出':'annual' };
   const rows = [];
+  // 見込み支出：単一の入力値
+  if (k === 'est') {
+    const v = parseComma(lsGet(m, 'an_estexp') || '0');
+    return v ? [{ name: '見込み支出', amt: v }] : [];
+  }
+  // ダイナース（BA＋個人）：カード明細の各行を実合計ベースで列挙
+  if (k === 'dinerscard') {
+    const dinersRows = (cid, tag, whole) => {
+      const w = parseComma(lsGet(m, cid) || '0'); // カード全体金額があればそれを1行で（内訳の固定費明細より優先）
+      if (w) return [{ name: whole + '（カード全体）', amt: w, tag: tag }];
+      return cardDetailPlanRows(cid, m, tag); // 無ければ固定費明細を1行ずつ
+    };
+    return [
+      ...dinersRows('card_ba', 'BA', 'ダイナース（BA）'),
+      ...dinersRows('card_per', '個人', 'ダイナース（個人）'),
+    ];
+  }
   EXPENSES.forEach(item => {
-    let _ck = map[item.group]; if (item.id === 'card_ba' || item.id === 'card_per') _ck = 'dinerscard'; if (_ck !== k) return;
+    if (item.id === 'card_ba' || item.id === 'card_per') return; // ダイナースは上で明細から列挙済み
+    const _ck = map[item.group]; if (_ck !== k) return;
     const v = monthItemAmount(m, item);
     if (v) rows.push({ name: item.label, amt: v });
   });
@@ -1758,10 +1853,15 @@ function _annualModal(title, rows, total) {
   ov.id = 'annualModal';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,20,40,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;';
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
-  const yen = n => '¥' + Math.round(n).toLocaleString('ja-JP');
+  const yen = n => { n = Math.round(n); return (n < 0 ? '−¥' : '¥') + Math.abs(n).toLocaleString('ja-JP'); };
+  const tagBadge = t => {
+    if (!t) return '';
+    const bg = t === 'BA' ? '#e3ecff' : '#ffe9d6', fg = t === 'BA' ? '#1e4dd8' : '#b5590a';
+    return `<span style="display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-right:7px;background:${bg};color:${fg};vertical-align:middle;">${t}</span>`;
+  };
   let body = rows.length
     ? rows.map(r => `<div style="display:flex;justify-content:space-between;gap:16px;padding:6px 2px;border-bottom:1px solid var(--border);font-size:13px;">
-        <span style="color:var(--ink);">${r.name}</span>
+        <span style="color:var(--ink);">${tagBadge(r.tag)}${r.name}</span>
         <span style="font-weight:700;white-space:nowrap;color:${r.amt<0?'var(--red)':'var(--ink)'};">${yen(r.amt)}</span></div>`).join('')
     : '<div style="padding:14px 2px;color:var(--ink-faint);font-size:13px;">明細はありません。</div>';
   ov.innerHTML = `
@@ -1782,15 +1882,18 @@ function showAnnualCell(m, k) {
   _annualModal(`${MONTHS[m]}　${_CAT_LABEL[k] || k} の内訳`, rows, total);
 }
 function showAnnualMonth(m) {
-  const cats = ['dinerscard','card','fixed','tax','annual','other','temp'];
+  const cats = ['est','dinerscard','card','fixed','tax','annual','other','temp'];
   const rows = [];
+  // 月合計＝収入−支出。収入をプラス、各支出をマイナスで表示（合計＝純額）
+  const inc = parseComma(lsGet(m, 'an_estincome') || '0');
+  if (inc) rows.push({ name: '見込み収入', amt: inc });
   cats.forEach(k => {
     const items = annualBreakItems(m, k);
     const sub = items.reduce((a, r) => a + r.amt, 0);
-    if (sub) rows.push({ name: _CAT_LABEL[k], amt: sub });
+    if (sub) rows.push({ name: _CAT_LABEL[k], amt: -sub });
   });
   const total = rows.reduce((a, r) => a + r.amt, 0);
-  _annualModal(`${MONTHS[m]}　支出合計の内訳（区分別）`, rows, total);
+  _annualModal(`${MONTHS[m]}　月合計の内訳（収入−支出）`, rows, total);
 }
 function showAnnualCatYear(k) {
   const rows = [];
@@ -1821,7 +1924,7 @@ function renderAll() {
 }
 
 // ── Recalc ──
-function fmt(n) { return '¥' + Math.round(n).toLocaleString('ja-JP'); }
+function fmt(n) { n = Math.round(n); return (n < 0 ? '−¥' : '¥') + Math.abs(n).toLocaleString('ja-JP'); }
 function gn(id) { const e=document.getElementById(id); return e?parseComma(e.value):0; }
 
 function recalc() {
